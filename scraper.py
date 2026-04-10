@@ -1,34 +1,35 @@
 import requests
-import cloudscraper
-import random
 import json
-import sys
 import time
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+import sys
+from urllib.parse import urljoin
 
-# SportyBet API Endpoints (from your discovery)
-SPORTYBET_ENDPOINTS = {
-    'events_by_order': 'https://www.sportybet.com/tz/factsCenter/wapConfigurableEventsByOrder',
-    'live_events': 'https://www.sportybet.com/tz/factsCenter/wapConfigurableIndexLiveEvents',
-    'highlight_events': 'https://www.sportybet.com/tz/factsCenter/wapConfigurableMixHighlightEvents',
-    'quick_market_a': 'https://www.sportybet.com/tz/factsCenter/quickMarketList?block=A&sport=sr:sport:1',
-    'quick_market_b': 'https://www.sportybet.com/tz/factsCenter/quickMarketList?block=B&sport=sr:sport:1',
-    'recommend_events': 'https://www.sportybet.com/tz/factsCenter/recommendScrollEvents/v2',
-    'custom_events': 'https://www.sportybet.com/tz/factsCenter/configurableCustomEvents',
-    'stale_odds': 'https://www.sportybet.com/tz/factsCenter/stale-odds/resume-policy',
-    'story_sets': 'https://www.sportybet.com/tz/factsCenter/story/v1/story-sets?page=0&pageSize=15',
-    'broadcast_config': 'https://www.sportybet.com/tz/common/config/broadcast',
-    'common_config': 'https://www.sportybet.com/tz/common/config/query',
-    'promotion_query': 'https://www.sportybet.com/tz/promotion/v1/sp/query',
-    'featured_booking': 'https://www.sportybet.com/tz/orders/bookingCode/featured?pageNum=1&pageSize=10',
-    'featured_users': 'https://www.sportybet.com/tz/patron/socialpage/featured-users',
-    'games_lobby': 'https://www.sportybet.com/tz/games/lobby/v1/games/getByRanking',
-    'anTest_campaign': 'https://www.sportybet.com/tz/anTest/client/campaign',
+# Disable SSL warnings (for free proxies with bad certs)
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# SportyBet endpoints from your discovery
+BASE_URL = 'https://www.sportybet.com/tz'
+ENDPOINTS = {
+    'events_by_order': '/factsCenter/wapConfigurableEventsByOrder',
+    'live_events': '/factsCenter/wapConfigurableIndexLiveEvents',
+    'highlight_events': '/factsCenter/wapConfigurableMixHighlightEvents',
+    'quick_market_a': '/factsCenter/quickMarketList?block=A&sport=sr:sport:1',
+    'quick_market_b': '/factsCenter/quickMarketList?block=B&sport=sr:sport:1',
+    'recommend_events': '/factsCenter/recommendScrollEvents/v2',
+    'custom_events': '/factsCenter/configurableCustomEvents',
+    'stale_odds': '/factsCenter/stale-odds/resume-policy',
+    'story_sets': '/factsCenter/story/v1/story-sets?page=0&pageSize=15',
+    'broadcast_config': '/common/config/broadcast',
+    'common_config': '/common/config/query',
+    'promotion_query': '/promotion/v1/sp/query',
+    'featured_booking': '/orders/bookingCode/featured?pageNum=1&pageSize=10',
+    'featured_users': '/patron/socialpage/featured-users',
+    'games_lobby': '/games/lobby/v1/games/getByRanking',
+    'anTest_campaign': '/anTest/client/campaign',
 }
 
-# Mobile headers to mimic app
+# Mobile headers to mimic real browser
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
@@ -37,189 +38,158 @@ HEADERS = {
     'Origin': 'https://www.sportybet.com',
     'Referer': 'https://www.sportybet.com/tz/m/sport/football',
     'X-Requested-With': 'XMLHttpRequest',
-    'Sec-Fetch-Dest': 'empty',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-origin',
+    'Connection': 'keep-alive',
 }
 
 def get_free_proxies():
-    """Load free proxies from file"""
-    try:
-        with open('proxies.txt', 'r') as f:
-            proxies = [p.strip() for p in f.readlines() if p.strip() and ':' in p]
-        return list(set(proxies))  # Remove duplicates
-    except:
-        return []
+    """Get fresh free proxies from multiple sources"""
+    sources = [
+        'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/http.txt',
+        'https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/http.txt',
+        'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+    ]
+    
+    proxies = []
+    for url in sources:
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                proxies.extend([p.strip() for p in r.text.split('\n') if ':' in p.strip()])
+        except:
+            continue
+    
+    # Remove duplicates and test a sample
+    unique_proxies = list(set(proxies))
+    print(f"Loaded {len(unique_proxies)} unique proxies from {len(sources)} sources")
+    return unique_proxies
 
-def test_proxy(proxy, scraper):
-    """Test if proxy works with SportyBet"""
+def test_proxy(proxy):
+    """Quick test if proxy works"""
     try:
         proxy_dict = {
             'http': f'http://{proxy}',
             'https': f'http://{proxy}'
         }
         
-        # Test with lightweight endpoint
-        test_url = SPORTYBET_ENDPOINTS['broadcast_config']
-        response = scraper.get(
+        # Test with a lightweight endpoint
+        test_url = f'{BASE_URL}/common/config/broadcast'
+        
+        response = requests.get(
             test_url,
             headers=HEADERS,
             proxies=proxy_dict,
-            timeout=15
+            timeout=15,
+            verify=False  # Bypass SSL cert issues
         )
         
         if response.status_code == 200:
             return proxy_dict
         return None
-    except:
+    except Exception as e:
         return None
 
-def scrape_with_proxy(endpoint_name, endpoint_url, scraper, proxy_dict):
-    """Scrape specific endpoint using proxy"""
+def scrape_endpoint(name, endpoint, proxy_dict=None):
+    """Scrape specific endpoint"""
+    url = urljoin(BASE_URL, endpoint)
+    
     try:
-        response = scraper.get(
-            endpoint_url,
-            headers=HEADERS,
-            proxies=proxy_dict,
-            timeout=30
-        )
+        if proxy_dict:
+            response = requests.get(
+                url,
+                headers=HEADERS,
+                proxies=proxy_dict,
+                timeout=30,
+                verify=False
+            )
+        else:
+            # Try direct (will likely fail with 403 but try anyway)
+            response = requests.get(
+                url,
+                headers=HEADERS,
+                timeout=10,
+                verify=False
+            )
         
         if response.status_code == 200:
             try:
                 return response.json()
             except:
-                return {'text': response.text[:1000]}
+                return {'text': response.text[:500]}
         else:
-            return {'error': f'Status {response.status_code}'}
+            return {'error': f'Status {response.status_code}', 'url': url}
             
     except Exception as e:
-        return {'error': str(e)}
-
-def scrape_with_selenium():
-    """Fallback: Use headless browser if proxies fail"""
-    print("Trying Selenium fallback...")
-    
-    chrome_options = Options()
-    chrome_options.add_argument('--headless')
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--disable-gpu')
-    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-    chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument(f'--user-agent={HEADERS["User-Agent"]}')
-    
-    try:
-        service = Service('/usr/bin/chromedriver')
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        
-        driver.get('https://www.sportybet.com/tz/m/sport/football')
-        time.sleep(10)
-        
-        # Extract via JavaScript
-        data = driver.execute_script("""
-            const matches = [];
-            document.querySelectorAll('.event-item, [data-testid="event"]').forEach(el => {
-                try {
-                    const teams = el.querySelectorAll('.team-name, [class*="team"]');
-                    const odds = el.querySelectorAll('.odd, button');
-                    if (teams.length >= 2 && odds.length >= 3) {
-                        matches.push({
-                            match: teams[0].innerText + ' vs ' + teams[1].innerText,
-                            home: odds[0].innerText,
-                            draw: odds[1].innerText,
-                            away: odds[2].innerText
-                        });
-                    }
-                } catch(e) {}
-            });
-            return matches;
-        """)
-        
-        driver.quit()
-        return {'selenium_matches': data}
-        
-    except Exception as e:
-        try:
-            driver.save_screenshot('error.png')
-            driver.quit()
-        except:
-            pass
-        return {'error': str(e)}
+        return {'error': str(e), 'url': url}
 
 def main():
-    print("=" * 50)
-    print("SportyBet Scraper with Free Proxies")
-    print("=" * 50)
+    print("=" * 60)
+    print("SportyBet Scraper - Fixed Version")
+    print("=" * 60)
     
-    # Create cloudscraper instance
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'android',
-            'mobile': True
-        },
-        delay=5
-    )
-    
-    # Load proxies
+    # Get proxies
     proxies = get_free_proxies()
-    print(f"Loaded {len(proxies)} free proxies")
     
     # Find working proxy
     working_proxy = None
     if proxies:
-        test_sample = random.sample(proxies, min(10, len(proxies)))
-        for proxy in test_sample:
-            print(f"Testing proxy: {proxy}")
-            result = test_proxy(proxy, scraper)
+        # Test random 20 proxies
+        test_sample = proxies[:20]  # Test first 20 (faster)
+        
+        for i, proxy in enumerate(test_sample):
+            print(f"[{i+1}/20] Testing proxy: {proxy[:20]}...")
+            result = test_proxy(proxy)
             if result:
                 working_proxy = result
-                print(f"✅ Working proxy found: {proxy}")
+                print(f"✅ Working proxy found!")
                 break
-            time.sleep(1)
     
     # Scrape all endpoints
-    all_data = {}
+    results = {}
     
-    for name, url in SPORTYBET_ENDPOINTS.items():
-        print(f"\nScraping: {name}")
+    for name, endpoint in ENDPOINTS.items():
+        print(f"\n🔍 Scraping: {name}")
         
-        if working_proxy:
-            data = scrape_with_proxy(name, url, scraper, working_proxy)
-        else:
-            # Try direct (will likely fail with 403)
-            try:
-                response = scraper.get(url, headers=HEADERS, timeout=10)
-                data = response.json() if response.status_code == 200 else {'error': response.status_code}
-            except Exception as e:
-                data = {'error': str(e)}
+        # Try with proxy first, then direct
+        data = scrape_endpoint(name, endpoint, working_proxy)
         
-        all_data[name] = {
-            'url': url,
+        if 'error' in data and working_proxy:
+            # Try another proxy if first failed
+            for backup in proxies[20:25]:  # Try 5 backups
+                backup_dict = {'http': f'http://{backup}', 'https': f'http://{backup}'}
+                data = scrape_endpoint(name, endpoint, backup_dict)
+                if 'error' not in data:
+                    break
+        
+        results[name] = {
+            'endpoint': endpoint,
             'data': data,
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
         }
         
-        print(f"Result: {'✅ Success' if 'error' not in data else '❌ ' + str(data['error'])}")
-        time.sleep(2)  # Be nice to server
+        status = '✅' if 'error' not in data else '❌'
+        print(f"{status} Result: {data.get('error', 'Success')[:50]}")
+        
+        # Small delay to be nice
+        time.sleep(1)
     
     # Save results
     with open('odds.json', 'w') as f:
-        json.dump(all_data, f, indent=2)
+        json.dump(results, f, indent=2)
     
-    print(f"\n{'=' * 50}")
-    print(f"Saved results for {len(all_data)} endpoints")
-    print("Check odds.json for data")
+    # Summary
+    success_count = sum(1 for r in results.values() if 'error' not in r['data'])
+    print(f"\n{'=' * 60}")
+    print(f"SUMMARY: {success_count}/{len(ENDPOINTS)} endpoints succeeded")
+    print(f"Saved to odds.json")
+    print(f"{'=' * 60}")
     
-    # If all failed, try Selenium
-    if all('error' in v['data'] for v in all_data.values()):
-        print("\nAll API endpoints failed. Trying Selenium...")
-        selenium_data = scrape_with_selenium()
-        all_data['selenium_fallback'] = selenium_data
-        
-        with open('odds.json', 'w') as f:
-            json.dump(all_data, f, indent=2)
+    # Print successful endpoints
+    if success_count > 0:
+        print("\n✅ Working endpoints:")
+        for name, result in results.items():
+            if 'error' not in result['data']:
+                print(f"  - {name}: {result['endpoint']}")
 
 if __name__ == '__main__':
     main()
-                       
+                             
