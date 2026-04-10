@@ -1,0 +1,44 @@
+name: SportyBet Scraper (Free Proxy)
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+        pip install selenium webdriver-manager requests cloudscraper
+    
+    - name: Get free proxies
+      run: |
+        curl -s https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/http.txt > proxies.txt || echo "" > proxies.txt
+        curl -s https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/http.txt >> proxies.txt || true
+        echo "Total proxies: $(wc -l < proxies.txt)"
+    
+    - name: Run scraper
+      run: python scraper.py
+      env:
+        PYTHONUNBUFFERED: "1"
+    
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      with:
+        name: sportybet-odds
+        path: |
+          odds.json
+          error.png
+      if: always()
