@@ -1,14 +1,14 @@
 import requests
 import json
 import time
-import sys
-from urllib.parse import urljoin
-
-# Disable SSL warnings (for free proxies with bad certs)
 import urllib3
+import random
+import sys
+
+# Disable SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# SportyBet endpoints from your discovery
+# Your discovered SportyBet endpoints
 BASE_URL = 'https://www.sportybet.com/tz'
 ENDPOINTS = {
     'events_by_order': '/factsCenter/wapConfigurableEventsByOrder',
@@ -29,167 +29,210 @@ ENDPOINTS = {
     'anTest_campaign': '/anTest/client/campaign',
 }
 
-# Mobile headers to mimic real browser
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Origin': 'https://www.sportybet.com',
-    'Referer': 'https://www.sportybet.com/tz/m/sport/football',
-    'X-Requested-With': 'XMLHttpRequest',
-    'Connection': 'keep-alive',
-}
+# Free proxy sources
+PROXY_SOURCES = [
+    'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+]
 
 def get_free_proxies():
     """Get fresh free proxies from multiple sources"""
-    sources = [
-        'https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/http.txt',
-        'https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/http.txt',
-        'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
-    ]
-    
     proxies = []
-    for url in sources:
+    for url in PROXY_SOURCES:
         try:
             r = requests.get(url, timeout=10)
             if r.status_code == 200:
                 proxies.extend([p.strip() for p in r.text.split('\n') if ':' in p.strip()])
         except:
             continue
-    
-    # Remove duplicates and test a sample
-    unique_proxies = list(set(proxies))
-    print(f"Loaded {len(unique_proxies)} unique proxies from {len(sources)} sources")
-    return unique_proxies
+    return list(set(proxies))
 
-def test_proxy(proxy):
-    """Quick test if proxy works"""
-    try:
-        proxy_dict = {
-            'http': f'http://{proxy}',
-            'https': f'http://{proxy}'
-        }
-        
-        # Test with a lightweight endpoint
-        test_url = f'{BASE_URL}/common/config/broadcast'
-        
-        response = requests.get(
-            test_url,
-            headers=HEADERS,
-            proxies=proxy_dict,
-            timeout=15,
-            verify=False  # Bypass SSL cert issues
-        )
-        
-        if response.status_code == 200:
-            return proxy_dict
-        return None
-    except Exception as e:
-        return None
-
-def scrape_endpoint(name, endpoint, proxy_dict=None):
-    """Scrape specific endpoint"""
-    url = urljoin(BASE_URL, endpoint)
+def get_bypass_headers():
+    """All bypass header variations"""
+    base = {
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Origin': 'https://www.sportybet.com',
+        'Referer': 'https://www.sportybet.com/tz/m/sport/football',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Connection': 'keep-alive',
+    }
     
+    variations = [
+        base,
+        {**base, 'X-Forwarded-For': '127.0.0.1', 'X-Real-IP': '127.0.0.1', 'X-Originating-IP': '127.0.0.1'},
+        {**base, 'X-Forwarded-For': '192.168.1.1', 'X-Real-IP': '192.168.1.1'},
+        {**base, 'X-Forwarded-For': '10.0.0.1', 'X-Real-IP': '10.0.0.1'},
+        {**base, 'X-Forwarded-For': '172.16.0.1', 'X-Real-IP': '172.16.0.1'},
+        {**base, 'X-HTTP-Method-Override': 'GET', 'X-Original-Method': 'GET'},
+        {**base, 'X-Forwarded-Host': 'www.sportybet.com', 'X-Forwarded-Proto': 'https'},
+        {**base, 'CF-Connecting-IP': '127.0.0.1'},
+        {**base, 'X-Client-IP': '127.0.0.1', 'X-Remote-IP': '127.0.0.1'},
+    ]
+    return variations
+
+def get_url_variations(endpoint):
+    """All URL path variations"""
+    return [
+        f'{BASE_URL}{endpoint}',
+        f'{BASE_URL}{endpoint}/',
+        f'{BASE_URL}{endpoint}..;/',
+        f'{BASE_URL}/./{endpoint.lstrip("/")}',
+        f'{BASE_URL}/%2e/{endpoint.lstrip("/")}',
+        f'{BASE_URL}%2f{endpoint.lstrip("/")}',
+        f'{BASE_URL}//{endpoint.lstrip("/")}',
+        f'{BASE_URL}{endpoint.replace("/", "//")}',
+        f'{BASE_URL}{endpoint}?cache_bust={random.randint(1000,9999)}',
+    ]
+
+def try_request(url, headers, proxy=None, method='GET', data=None):
+    """Try a single request with given parameters"""
     try:
-        if proxy_dict:
+        proxies = {'http': f'http://{proxy}', 'https': f'http://{proxy}'} if proxy else None
+        
+        if method == 'GET':
             response = requests.get(
-                url,
-                headers=HEADERS,
-                proxies=proxy_dict,
-                timeout=30,
-                verify=False
+                url, headers=headers, proxies=proxies, 
+                timeout=15, verify=False, allow_redirects=True
             )
-        else:
-            # Try direct (will likely fail with 403 but try anyway)
-            response = requests.get(
-                url,
-                headers=HEADERS,
-                timeout=10,
-                verify=False
+        elif method == 'POST':
+            response = requests.post(
+                url, headers=headers, data=data, proxies=proxies,
+                timeout=15, verify=False, allow_redirects=True
+            )
+        elif method == 'PUT':
+            response = requests.put(
+                url, headers=headers, proxies=proxies,
+                timeout=15, verify=False, allow_redirects=True
             )
         
         if response.status_code == 200:
             try:
                 return response.json()
             except:
-                return {'text': response.text[:500]}
-        else:
-            return {'error': f'Status {response.status_code}', 'url': url}
-            
+                return {'text': response.text[:1000]}
+        return {'error': f'Status {response.status_code}'}
+        
     except Exception as e:
-        return {'error': str(e), 'url': url}
+        return {'error': str(e)[:100]}
 
-def main():
-    print("=" * 60)
-    print("SportyBet Scraper - Fixed Version")
-    print("=" * 60)
+def try_all_techniques(endpoint):
+    """Try all bypass techniques for an endpoint"""
+    print(f"\n{'='*60}")
+    print(f"Testing: {endpoint}")
+    print(f"{'='*60}")
     
-    # Get proxies
+    # Get variations
+    urls = get_url_variations(endpoint)
+    headers_list = get_bypass_headers()
     proxies = get_free_proxies()
     
-    # Find working proxy
-    working_proxy = None
-    if proxies:
-        # Test random 20 proxies
-        test_sample = proxies[:20]  # Test first 20 (faster)
-        
-        for i, proxy in enumerate(test_sample):
-            print(f"[{i+1}/20] Testing proxy: {proxy[:20]}...")
-            result = test_proxy(proxy)
-            if result:
-                working_proxy = result
-                print(f"✅ Working proxy found!")
-                break
+    print(f"URLs to try: {len(urls)}")
+    print(f"Header variations: {len(headers_list)}")
+    print(f"Proxies available: {len(proxies)}")
     
-    # Scrape all endpoints
+    # Technique 1: Direct requests with different headers
+    print("\n[1] Trying direct requests with header variations...")
+    for i, headers in enumerate(headers_list):
+        for url in urls[:3]:  # First 3 URL variations
+            print(f"  Direct attempt {i+1}...")
+            result = try_request(url, headers)
+            if 'error' not in result:
+                print(f"  ✅ SUCCESS - Direct with headers variation {i+1}")
+                return result, f"direct_headers_{i+1}"
+    
+    # Technique 2: With free proxies
+    print("\n[2] Trying with free proxies...")
+    for i, proxy in enumerate(proxies[:15]):
+        print(f"  Proxy {i+1}/15: {proxy[:20]}...")
+        for headers in headers_list[:3]:
+            for url in urls[:2]:
+                result = try_request(url, headers, proxy)
+                if 'error' not in result:
+                    print(f"  ✅ SUCCESS - Proxy {proxy[:20]}")
+                    return result, f"proxy_{i+1}"
+    
+    # Technique 3: POST with method override
+    print("\n[3] Trying POST with method override...")
+    for headers in headers_list:
+        headers = {**headers, 'X-HTTP-Method-Override': 'GET'}
+        for url in urls[:2]:
+            result = try_request(url, headers, method='POST')
+            if 'error' not in result:
+                print(f"  ✅ SUCCESS - POST override")
+                return result, "post_override"
+    
+    # Technique 4: PUT request
+    print("\n[4] Trying PUT requests...")
+    for headers in headers_list[:2]:
+        for url in urls[:2]:
+            result = try_request(url, headers, method='PUT')
+            if 'error' not in result:
+                print(f"  ✅ SUCCESS - PUT")
+                return result, "put_method"
+    
+    # Technique 5: Case manipulation
+    print("\n[5] Trying case manipulation...")
+    case_urls = [
+        f'{BASE_URL}{endpoint}'.replace('factsCenter', 'FactsCenter'),
+        f'{BASE_URL}{endpoint}'.replace('factsCenter', 'FACTSCENTER').lower(),
+        f'{BASE_URL}{endpoint}'.replace('wapConfigurable', 'WAPCONFIGURABLE').lower(),
+    ]
+    for url in case_urls:
+        for headers in headers_list[:2]:
+            result = try_request(url, headers)
+            if 'error' not in result:
+                print(f"  ✅ SUCCESS - Case manipulation")
+                return result, "case_manipulation"
+    
+    return {'error': 'All techniques failed'}, None
+
+def main():
+    print("=" * 70)
+    print("SPORTYBET SCRAPER - ALL BYPASS TECHNIQUES COMBINED")
+    print("=" * 70)
+    
     results = {}
+    successful_techniques = {}
     
     for name, endpoint in ENDPOINTS.items():
-        print(f"\n🔍 Scraping: {name}")
-        
-        # Try with proxy first, then direct
-        data = scrape_endpoint(name, endpoint, working_proxy)
-        
-        if 'error' in data and working_proxy:
-            # Try another proxy if first failed
-            for backup in proxies[20:25]:  # Try 5 backups
-                backup_dict = {'http': f'http://{backup}', 'https': f'http://{backup}'}
-                data = scrape_endpoint(name, endpoint, backup_dict)
-                if 'error' not in data:
-                    break
+        data, technique = try_all_techniques(endpoint)
         
         results[name] = {
             'endpoint': endpoint,
             'data': data,
+            'technique': technique,
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
         }
         
-        status = '✅' if 'error' not in data else '❌'
-        print(f"{status} Result: {data.get('error', 'Success')[:50]}")
+        if technique:
+            successful_techniques[name] = technique
         
-        # Small delay to be nice
-        time.sleep(1)
+        time.sleep(1)  # Be nice
     
     # Save results
     with open('odds.json', 'w') as f:
         json.dump(results, f, indent=2)
     
     # Summary
-    success_count = sum(1 for r in results.values() if 'error' not in r['data'])
-    print(f"\n{'=' * 60}")
-    print(f"SUMMARY: {success_count}/{len(ENDPOINTS)} endpoints succeeded")
-    print(f"Saved to odds.json")
-    print(f"{'=' * 60}")
+    print(f"\n{'='*70}")
+    print("SUMMARY")
+    print(f"{'='*70}")
     
-    # Print successful endpoints
-    if success_count > 0:
-        print("\n✅ Working endpoints:")
-        for name, result in results.items():
-            if 'error' not in result['data']:
-                print(f"  - {name}: {result['endpoint']}")
+    success_count = len(successful_techniques)
+    print(f"Successful: {success_count}/{len(ENDPOINTS)}")
+    
+    if successful_techniques:
+        print("\n✅ Working endpoints and techniques:")
+        for name, tech in successful_techniques.items():
+            print(f"  - {name}: {tech}")
+    
+    print(f"\nSaved to odds.json")
+    print(f"{'='*70}")
 
 if __name__ == '__main__':
     main()
-                             
+        
